@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <link rel="stylesheet" href="Home.css">
+    <style>
+        .status-indicator {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            width: 10px;
+            height: 10px;
+            background-color: green;
+            border: 2px solid white;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h2>Friend List</h2>
+    <h2 id="loggedInUserName" style="color: red"></h2>
+    <div id="user-card-container">
+    </div>
+
+    <label for="username">Username</label>
+    <input type="text" placeholder="username" id="username" />
+
+    <label for="password">Password</label>
+    <input type="password" placeholder="password" id="password" />
+    <button onclick="login()">Login</button>
+</div>
+
+<div class="chat-view">
+    <h2 id="chat-with">Chat View</h2>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input">
+        <input type="text" id="messageInput" placeholder="Nhập tin nhắn..." />
+        <button onclick="sendMessage()">Gửi</button>
+    </div>
+</div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0-beta2/bundles/stomp.umd.min.js"></script>
+<!-- Code JavaScript riêng biệt -->
+<script type="application/javascript">
+
+    let stompClient;
+    let onlineUsers = new Set();
+    async function login() {
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+
+        const data = {
+            username: username,
+            password: password
+        };
+
+        try {
+            const response = await fetch("http://localhost:8080/users/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(data)
+            });
+
+            const responseData = await response.json();
+            document.getElementById("loggedInUserName").innerText = `Logged User: ${responseData.username}`;
+            try {
+                const onlineUserResponse = await fetch("http://localhost:8080/users/friends", {
+                    method: "GET",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${responseData.token}` // Thêm token vào request
+                    }
+                });
+                sessionStorage.setItem("userToken", responseData.token)
+                sessionStorage.setItem("loggedInUserId", responseData.userId)
+                const data = await onlineUserResponse.json()
+                const userCardWrapper = document.getElementById("user-card-container");
+
+                if (data.length > 0) {
+                    // Hiển thị container khi có dữ liệu user
+                    userCardWrapper.innerHTML = "";
+                    userCardWrapper.style.display = "block";
+                    data.forEach(user => {
+                        const userCard = document.createElement("div");
+                        const isOnline = user.online ? "status-indicator" : ""
+                        userCard.className = "user-card";
+                        userCard.setAttribute("data-user-id", user.otherSideUserId);
+                        userCard.setAttribute("conversation-id", user.convId);
+                        userCard.innerHTML = `
+                        <div style="display: flex; align-items: center;">
+                            <div class="avatar" style="margin-right: 10px;">
+                                <img src="${user.otherSideUserAvatar}" alt="Avatar" style="width: 40px; height: 40px; border-radius: 50%;">
+                                <div id="status-${user.otherSideUserId}" class="${isOnline}"></div>
+                            </div>
+                            <div>
+                                <h3 style="margin: 0;">${user.otherSideUserName}</h3>
+                            </div>
+                                <div class="notification-dot" id="notify-${user.id}"></div>
+                        </div>`;
+                        userCardWrapper.appendChild(userCard);
+                        userCard.addEventListener("click", () => {
+                            document.getElementById("chat-with").textContent = `Chat with: ${user.otherSideUserName}`
+                            // Lưu vào Session Storage
+                            sessionStorage.setItem("currentReceiverId", user.otherSideUserId);
+                            sessionStorage.setItem("currentConversationId", user.convId);
+                            stompClient.subscribe("/topic/" + user.convId, (message) => {
+                               const receivedMessage = JSON.parse(message.body);
+                               receiveMessage(receivedMessage);
+                            });
+                            loadMessage(user.convId);
+                        });
+                    })
+                }
+            }catch (error){
+                console.log("Fetch error: ", error)
+            }
+            const config = {
+                brokerURL: "ws://127.0.0.1:8080/ws",
+                connectHeaders: {
+                    Authorization: `Bearer ${responseData.token}`
+                }
+            }
+            stompClient = new StompJs.Client(config)
+            stompClient.onConnect = () => {
+                stompClient.subscribe("/topic/" + responseData.userId, (message) => {
+                    const messageData = JSON.parse(message.body);
+                    if(messageData.friendStatus === "ONLINE") {
+                        onlineUsers.add(messageData.friendId)
+                        document.getElementById(`status-${messageData.friendId}`).classList.add("status-indicator")
+                    }else {
+                        document.getElementById(`status-${messageData.friendId}`).classList.remove("status-indicator")
+                    }
+                });
+                const convId = sessionStorage.getItem("currentConversationId");
+                stompClient.subscribe("/topic/" + convId, (message) => {
+                    const messageData = JSON.parse(message.body);
+                    console.log(messageData)
+                });
+            }
+            stompClient.onStompError = (frame) => {
+                console.error('❌ Lỗi STOMP:', frame.headers['message']);
+            };
+
+            stompClient.activate();
+            localStorage.setItem("loginResponse", JSON.stringify(responseData))
+        } catch (error) {
+            console.error("Lỗi đăng nhập:", error);
+        }
+    }
+    async function loadMessage(conversationId) {
+        try {
+            const messages = await fetch(`http://localhost:8080/chats?convId=${conversationId}`);
+            const messagesResponse = await messages.json();
+            const currentChatWithUserId = sessionStorage.getItem("currentReceiverId")
+            const chatMessages = document.getElementById("chat-messages");
+            chatMessages.innerHTML = ""
+            messagesResponse.forEach(message => {
+                if(message.fromUser === currentChatWithUserId) {
+                    receiveMessage(message)
+                }else{
+                    const messageElement = document.createElement("div");
+                    messageElement.classList.add("message", "sent");
+                    messageElement.textContent = message.content;
+                    chatMessages.appendChild(messageElement);
+                }
+            })
+        }catch (error) {
+            alert(error)
+        }
+    }
+    function sendMessage() {
+        const messageInput = document.getElementById("messageInput");
+        const messageContent = messageInput.value.trim();
+        const chatMessages = document.getElementById("chat-messages");
+
+        if (messageContent !== "") {
+            const messageElement = document.createElement("div");
+            messageElement.classList.add("message", "sent");
+            messageElement.textContent = messageContent;
+            chatMessages.appendChild(messageElement);
+            const senderId = sessionStorage.getItem("loggedInUserId")
+            const receiverId = sessionStorage.getItem("currentReceiverId");
+            const conversationId = sessionStorage.getItem("currentConversationId");
+            const message = {
+                fromUser : senderId,
+                toUser : receiverId,
+                content : messageContent,
+                messageType : "TEXT",
+            }
+            stompClient.publish({
+                destination: `/app/chat/sendMessage/${conversationId}`,
+                body: JSON.stringify(message)
+            });
+            messageInput.value = "";
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        // Simulate receiving a message after 1 second
+    }
+
+    function receiveMessage(message) {
+        const chatMessages = document.getElementById("chat-messages");
+        const messageElement = document.createElement("div");
+        const currentChatWithUserId = sessionStorage.getItem("currentReceiverId")
+        if(message.fromUser === currentChatWithUserId) {
+            messageElement.classList.add("message", "received");
+            messageElement.textContent = message.content;
+
+            chatMessages.appendChild(messageElement);
+        }
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# This configuration is intended for development purpose, it's **your** responsibility to harden it for production
+name: chat-app
+services:
+  mysql:
+    image: mysql:9.0.1-oracle
+    environment:
+      - MYSQL_USER=docker_database
+      - MYSQL_ROOT_PASSWORD=0011246
+      - MYSQL_DATABASE=chat-app
+    # If you want to expose these ports outside your dev PC,
+    # remove the "127.0.0.1:" prefix
+    restart: on-failure
+    ports:
+      - "3306:3306"

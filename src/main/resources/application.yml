@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    type: com.zaxxer.hikari.HikariDataSource
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:chat-app}
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:0011246}
+    hikari:
+      poolName: Hikari
+      auto-commit: false
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+frontend:
+  caller:
+    host: http://localhost:3000
+rsa:
+  rsa-private-key: classpath:certs/private_key.pem
+  rsa-public-key: classpath:certs/public_key.pem
+jwt:
+  expiration-time: 3600
